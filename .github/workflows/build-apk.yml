@@ -16,11 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Extract project
+      - name: Extract Luna LIVE
         run: |
           unzip -q LunaLIVE-cloud-build.zip
-          echo "=== ESTRUCTURA ==="
-          find . -maxdepth 5 -type f | head -200
+          echo "=== ESTRUCTURA DEL PROYECTO ==="
+          find . -maxdepth 5 -type f | head -250
 
       - name: Locate Android project
         run: |
@@ -28,12 +28,14 @@ jobs:
 
           if [ -z "$PROJECT" ]; then
             echo "ERROR: No se encontró gradlew"
-            echo "=== ARCHIVOS DISPONIBLES ==="
-            find . -maxdepth 6 -type f | sort | head -300
+            echo "=== ARCHIVOS ENCONTRADOS ==="
+            find . -maxdepth 7 -type f | sort | head -400
             exit 1
           fi
 
-          echo "Proyecto Android encontrado en: $PROJECT"
+          echo "Proyecto Android:"
+          echo "$PROJECT"
+
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
 
       - name: Set up Java
@@ -43,14 +45,17 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
+      - name: Configure Android SDK
         run: |
-          sdkmanager "platform-tools" \
-                     "platforms;android-35" \
-                     "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Make Gradle executable
         run: chmod +x "$PROJECT/gradlew"
@@ -58,13 +63,22 @@ jobs:
       - name: Build APK
         working-directory: ${{ env.PROJECT }}
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info
 
       - name: Find APK
         if: success()
         run: |
-          echo "=== APK GENERADO ==="
-          find "$PROJECT" -type f -name "*.apk" -print
+          echo "================================"
+          echo "       APK GENERADO"
+          echo "================================"
+
+          find "$PROJECT" \
+            -type f \
+            -name "*.apk" \
+            -print
 
       - name: Upload APK
         if: success()

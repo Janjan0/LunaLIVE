@@ -1,0 +1,63 @@
+name: Build Luna LIVE APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract project
+        run: |
+          unzip -q LunaLIVE-cloud-build.zip
+          find . -maxdepth 4 -type f | head -100
+
+      - name: Locate Android project
+        run: |
+          PROJECT=$(find . -name gradlew -type f -print -quit | xargs -r dirname)
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: No se encontró gradlew"
+            exit 1
+          fi
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Make Gradle executable
+        run: chmod +x "$PROJECT/gradlew"
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT }}
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Find APK
+        run: |
+          find "$PROJECT" -type f -name "*.apk" -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LunaLIVE-debug-apk
+          path: |
+            ${{ env.PROJECT }}/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error

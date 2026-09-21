@@ -3,7 +3,8 @@ name: Build Luna LIVE APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -13,28 +14,67 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # --------------------------------------------------
+      # 1. Descargar el repositorio
+      # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v5
 
+      # --------------------------------------------------
+      # 2. Extraer el proyecto Android
+      # --------------------------------------------------
       - name: Extract Luna LIVE
+        shell: bash
         run: |
-          unzip -q LunaLIVE-cloud-build.zip
-          echo "=== ESTRUCTURA ==="
-          find . -maxdepth 5 -type f | head -250
+          set -e
 
-      - name: Locate Android project
-        run: |
-          PROJECT=$(find . -name gradlew -type f -print -quit | xargs -r dirname)
-
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: No se encontró gradlew"
-            find . -maxdepth 7 -type f | sort | head -400
+          if [ ! -f "LunaLIVE-cloud-build.zip" ]; then
+            echo "ERROR: No existe LunaLIVE-cloud-build.zip"
+            echo "Archivos disponibles:"
+            find . -maxdepth 3 -type f | sort
             exit 1
           fi
 
-          echo "Proyecto: $PROJECT"
+          unzip -q LunaLIVE-cloud-build.zip
+
+          echo ""
+          echo "=============================================="
+          echo "       ESTRUCTURA DEL PROYECTO"
+          echo "=============================================="
+
+          find . -maxdepth 5 -type f | sort | head -250
+
+      # --------------------------------------------------
+      # 3. Encontrar el proyecto Android
+      # --------------------------------------------------
+      - name: Locate Android project
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT=$(find . -type f -name "gradlew" -print -quit | xargs -r dirname)
+
+          if [ -z "$PROJECT" ]; then
+            echo ""
+            echo "ERROR: No se encontró gradlew."
+            echo ""
+            echo "Archivos encontrados:"
+            find . -maxdepth 8 -type f | sort | head -500
+            exit 1
+          fi
+
+          echo ""
+          echo "=============================================="
+          echo "       PROYECTO ANDROID ENCONTRADO"
+          echo "=============================================="
+          echo "$PROJECT"
+          echo ""
+
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
 
+      # --------------------------------------------------
+      # 4. Java 17
+      # --------------------------------------------------
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -42,6 +82,9 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      # --------------------------------------------------
+      # 5. Android SDK
+      # --------------------------------------------------
       - name: Configure Android SDK
         shell: bash
         run: |
@@ -54,58 +97,180 @@ jobs:
 
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
           elif [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
             SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
           elif command -v sdkmanager >/dev/null 2>&1; then
             SDKMANAGER="$(command -v sdkmanager)"
+
           else
-            SDKMANAGER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" \
-              -type f -name sdkmanager 2>/dev/null | head -1 || true)
+            SDKMANAGER=$(find \
+              "$ANDROID_HOME" \
+              "$ANDROID_SDK_ROOT" \
+              /usr/local/lib/android/sdk \
+              -type f \
+              -name "sdkmanager" \
+              2>/dev/null | head -1 || true)
           fi
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: No se encontró sdkmanager"
-            echo "=== SDK ==="
-            find /usr/local/lib/android/sdk -maxdepth 5 -type f -name sdkmanager 2>/dev/null || true
+            echo ""
+            echo "ERROR: No se encontró sdkmanager."
+            echo ""
+            echo "Buscando sdkmanager en el sistema:"
+            find /usr/local/lib/android/sdk \
+              -maxdepth 7 \
+              -type f \
+              -name "sdkmanager" \
+              -print \
+              2>/dev/null || true
+
             exit 1
           fi
 
-          echo "sdkmanager encontrado en:"
+          echo ""
+          echo "=============================================="
+          echo "       SDKMANAGER ENCONTRADO"
+          echo "=============================================="
           echo "$SDKMANAGER"
+          echo ""
 
-          SDK_DIR="$(dirname "$(dirname "$(dirname "$SDKMANAGER")")")"
-          echo "SDK_DIR=$SDK_DIR"
+          echo "Aceptando licencias de Android..."
 
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          echo ""
+          echo "Instalando componentes necesarios..."
 
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Make Gradle executable
-        run: chmod +x "$PROJECT/gradlew"
+          echo ""
+          echo "Android SDK preparado correctamente."
 
+      # --------------------------------------------------
+      # 6. Dar permisos a Gradle
+      # --------------------------------------------------
+      - name: Make Gradle executable
+        shell: bash
+        run: |
+          set -e
+          chmod +x "$PROJECT/gradlew"
+
+      # --------------------------------------------------
+      # 7. Comprobar Gradle antes de compilar
+      # --------------------------------------------------
+      - name: Check Gradle
+        working-directory: ${{ env.PROJECT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=============================================="
+          echo "             INFORMACIÓN GRADLE"
+          echo "=============================================="
+
+          ./gradlew --version
+
+      # --------------------------------------------------
+      # 8. Compilar APK
+      # --------------------------------------------------
       - name: Build APK
         working-directory: ${{ env.PROJECT }}
+        shell: bash
         run: |
+          set +e
+
+          echo ""
+          echo "=============================================="
+          echo "          COMPILANDO LUNA LIVE"
+          echo "=============================================="
+          echo ""
+
           ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace \
-            --info
+            --info 2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
 
+          EXIT_CODE=${PIPESTATUS[0]}
+
+          echo ""
+          echo "=============================================="
+          echo "       DIAGNÓSTICO DE COMPILACIÓN"
+          echo "=============================================="
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+
+            echo ""
+            echo "---------- ERRORES KOTLIN ----------"
+            echo ""
+
+            grep -E \
+              "e: |error:|Unresolved reference|Type mismatch|Cannot find|Compilation error|Overload resolution ambiguity|None of the following functions|Expecting|Conflicting declarations|Val cannot be reassigned|No value passed for parameter" \
+              "$GITHUB_WORKSPACE/gradle-build.log" \
+              | tail -150 || true
+
+            echo ""
+            echo "---------- TAREAS FALLIDAS ----------"
+            echo ""
+
+            grep -E \
+              "Execution failed for task|FAILURE: Build failed" \
+              "$GITHUB_WORKSPACE/gradle-build.log" \
+              | tail -30 || true
+
+            echo ""
+            echo "---------- ARCHIVOS KOTLIN ----------"
+            echo ""
+
+            find "$PROJECT" \
+              -type f \
+              \( -name "*.kt" -o -name "*.kts" \) \
+              -print \
+              | sort \
+              | head -200
+
+            echo ""
+            echo "=============================================="
+            echo "       LA COMPILACIÓN FALLÓ"
+            echo "       Código de salida: $EXIT_CODE"
+            echo "=============================================="
+
+          else
+
+            echo ""
+            echo "=============================================="
+            echo "       COMPILACIÓN EXITOSA"
+            echo "=============================================="
+
+          fi
+
+          exit "$EXIT_CODE"
+
+      # --------------------------------------------------
+      # 9. Buscar APK
+      # --------------------------------------------------
       - name: Find APK
         if: success()
+        shell: bash
         run: |
-          echo "================================"
-          echo "       APK GENERADO"
-          echo "================================"
+          echo ""
+          echo "=============================================="
+          echo "             APK GENERADO"
+          echo "=============================================="
+          echo ""
 
           find "$PROJECT" \
             -type f \
             -name "*.apk" \
             -print
 
+      # --------------------------------------------------
+      # 10. Subir APK como Artifact
+      # --------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
@@ -114,3 +279,15 @@ jobs:
           path: |
             ${{ env.PROJECT }}/**/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+      # --------------------------------------------------
+      # 11. Guardar log aunque falle
+      # --------------------------------------------------
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LunaLIVE-build-log
+          path: |
+            gradle-build.log
+          if-no-files-found: ignore
